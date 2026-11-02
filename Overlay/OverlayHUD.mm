@@ -99,10 +99,10 @@ static NSDate *MTime(NSString *path) {
     _title.textAlignment = NSTextAlignmentCenter;
     _title.adjustsFontSizeToFitWidth = YES;
     _sub = [UILabel new];
-    _sub.font = [UIFont systemFontOfSize:13 weight:UIFontWeightRegular];
+    _sub.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
     _sub.textColor = [UIColor colorWithWhite:0.85 alpha:1];
-    _sub.textAlignment = NSTextAlignmentCenter;
-    _sub.numberOfLines = 2;
+    _sub.numberOfLines = 4;
+    _sub.textAlignment = NSTextAlignmentLeft;
 
     UIStackView *st = [[UIStackView alloc] initWithArrangedSubviews:@[_title, _sub]];
     st.axis = UILayoutConstraintAxisVertical;
@@ -138,6 +138,28 @@ static NSString *FmtKm(double m) {
     return [[NSString stringWithFormat:@"%.2f km", m / 1000.0] stringByReplacingOccurrencesOfString:@"." withString:@","];
 }
 
+// Đọc dòng chữ phụ (tên điểm đón/trả) từ các tín hiệu phụ.
+static NSString *ReadSubText(void) {
+    static int tokens[40];
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        for (int i = 0; i < 40; i++)
+            notify_register_check([NSString stringWithFormat:@"%s.t%d", NOTIFY_OVERLAY, i].UTF8String, &tokens[i]);
+    });
+    uint64_t len = 0;
+    notify_get_state(tokens[0], &len);
+    if (len == 0 || len > 39 * 8) return @"";
+    NSMutableData *d = [NSMutableData dataWithLength:39 * 8];
+    uint8_t *b = (uint8_t *)d.mutableBytes;
+    for (int s = 1; s < 40; s++) {
+        uint64_t v = 0;
+        notify_get_state(tokens[s], &v);
+        for (int k = 0; k < 8; k++) b[(s - 1) * 8 + k] = (v >> (8 * k)) & 0xFF;
+    }
+    d.length = (NSUInteger)len;
+    return [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] ?: @"";
+}
+
 // Dựng chữ từ 64 bit số liệu do phần đọc màn hình gửi (xem OverlayWriter.swift).
 - (void)applyState:(uint64_t)v {
     _stateCount++;
@@ -160,7 +182,7 @@ static NSString *FmtKm(double m) {
                                     : [NSString stringWithFormat:@"%d phút", mins]]; break;
         default: title = @"Đón → Trả: không tìm được vị trí"; break;
     }
-    [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @YES, @"y": @(y), @"title": title, @"sub": @""} options:0 error:nil]];
+    [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @YES, @"y": @(y), @"title": title, @"sub": ReadSubText()} options:0 error:nil]];
 }
 
 - (void)apply:(NSData *)d {
