@@ -27,7 +27,11 @@ enum TripDistance {
     /// Cặp từ đứng liền nhau, ví dụ "van dinh", "nam du".
     static func bigrams(_ s: String) -> Set<String> {
         let w = words(s)
-        return w.count < 2 ? [] : Set((0..<(w.count - 1)).map { w[$0] + " " + w[$0 + 1] })
+        var out = Set<String>()
+        if w.count >= 2 {
+            for i in 0..<(w.count - 1) { out.insert(w[i] + " " + w[i + 1]) }
+        }
+        return out
     }
 
     /// Điểm khớp: mỗi từ trùng 1 điểm, mỗi cụm 2 từ liền nhau trùng 2 điểm

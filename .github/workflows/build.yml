@@ -19,8 +19,7 @@ jobs:
         run: |
           xcodegen generate
           xcodebuild -project QuangDuongCuoc.xcodeproj -scheme QuangDuongCuoc -configuration Release \
-            -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build | tail -40
-          test ${PIPESTATUS[0]} -eq 0
+            -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E 'error:|Undefined|ld:' build.log | sort -u | head -60; exit 1; }
       - name: Package .tipa
         run: |
           VER=$(grep MARKETING_VERSION project.yml | head -1 | sed 's/.*"\(.*\)"/\1/')
