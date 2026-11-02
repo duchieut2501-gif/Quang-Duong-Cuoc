@@ -7,11 +7,14 @@ permissions:
   contents: write
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - name: Tools
-        run: brew install xcodegen ldid
+        run: |
+          brew install xcodegen ldid
+          X=$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1); echo "$X"
+          sudo xcode-select -s "$X"
       - name: Build
         run: |
           xcodegen generate
