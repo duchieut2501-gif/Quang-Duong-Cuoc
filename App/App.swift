@@ -102,7 +102,7 @@ struct ContentView: View {
 
     private func refreshOverlay() {
         let on = IsOverlayEnabled()
-        let st = OverlayStatus()
+        let st: String = OverlayStatus() ?? ""
         DispatchQueue.main.async { overlayOn = on; overlayStatus = st }
     }
 
