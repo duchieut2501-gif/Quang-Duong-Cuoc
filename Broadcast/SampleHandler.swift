@@ -59,7 +59,7 @@ class SampleHandler: RPBroadcastSampleHandler {
             }
             lastReadAt = Date()
             currentMarkers = m
-            if t == current { return }
+            if let c = current, c.sameTrip(t) { return }   // cùng cuốc: không tính lại
             current = t
             tripID += 1
             let id = tripID

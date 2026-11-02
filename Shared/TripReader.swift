@@ -7,6 +7,16 @@ struct TripText: Equatable {
     var pickupDetail: String
     var dropoffTitle: String
     var dropoffDetail: String
+    /// Khoảng cách xe → điểm đón do app tài xế hiện (ví dụ "0.32km"), nếu đọc được.
+    var driverKm: Double? = nil
+
+    /// Cùng một cuốc nếu chữ đọc được gần giống nhau (OCR mỗi lần có thể lệch vài ký tự).
+    func sameTrip(_ o: TripText) -> Bool {
+        func toks(_ t: TripText) -> Set<String> { TripDistance.tokens(t.pickupTitle + " " + t.dropoffTitle) }
+        let a = toks(self), b = toks(o)
+        let u = a.union(b).count
+        return u == 0 || Double(a.intersection(b).count) / Double(u) >= 0.6
+    }
 }
 
 /// Nhận diện màn hình báo cuốc (Xanh SM) và đọc 2 địa chỉ.
@@ -77,7 +87,7 @@ final class TripReader {
     /// Đọc chữ (OCR) trong vùng 2 địa chỉ.
     func readText(_ image: CIImage, _ m: Markers) -> TripText? {
         let ext = image.extent
-        let topF = max(0, m.pickupTop - 0.015)
+        let topF = max(0, m.pickupTop - 0.07)  // gồm cả dòng khoảng cách xe → điểm đón
         let botF = min(1, m.dropoffTop + 0.2)
         // CIImage gốc toạ độ ở góc dưới-trái.
         let crop = CGRect(x: ext.minX + ext.width * 0.09, y: ext.minY + ext.height * (1 - botF),
@@ -104,7 +114,15 @@ final class TripReader {
             return Line(text: t, top: topF + (1 - b.maxY) * span, height: b.height * span)
         }.sorted { $0.top < $1.top }
 
-        let pick = lines.filter { $0.top < m.dropoffTop - 0.006 }
+        let pick = lines.filter { $0.top >= m.pickupTop - 0.012 && $0.top < m.dropoffTop - 0.006 }
+        var driverKm: Double?
+        for l in lines where l.top < m.pickupTop - 0.012 {
+            if let r = l.text.range(of: #"[0-9]+([.,][0-9]+)?\s*km"#, options: .regularExpression) {
+                let num = l.text[r].replacingOccurrences(of: "km", with: "")
+                    .replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
+                driverKm = Double(num)
+            }
+        }
         var drop: [Line] = []
         for l in lines where l.top >= m.dropoffTop - 0.006 {
             if let last = drop.last, l.top - last.top > 0.045 { break } // hết khối địa chỉ
@@ -123,7 +141,7 @@ final class TripReader {
             diag = "Thấy cuốc nhưng đọc chữ thiếu: \(lines.map(\.text).joined(separator: " / "))"
             return nil
         }
-        return TripText(pickupTitle: pt, pickupDetail: pd, dropoffTitle: dt, dropoffDetail: dd)
+        return TripText(pickupTitle: pt, pickupDetail: pd, dropoffTitle: dt, dropoffDetail: dd, driverKm: driverKm)
     }
 
     func read(_ image: CIImage) -> TripText? {

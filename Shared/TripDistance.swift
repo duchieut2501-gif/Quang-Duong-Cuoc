@@ -45,6 +45,15 @@ enum TripDistance {
         return Double(want.intersection(have).count) + 2 * Double(wantPairs.intersection(havePairs).count)
     }
 
+    /// "16 Ngách 4 Ngõ 67 Đường Nam Dư" -> "16 Ngách 67/4 Nam Dư" (cách Apple Maps ghi ở Hà Nội)
+    static func hanoiStyle(_ t: String) -> String? {
+        let pat = #"^(\d+)\s+Ngách\s+(\d+)\s+Ngõ\s+(\d+)\s+(?:Đường\s+|Phố\s+)?(.+)$"#
+        guard let re = try? NSRegularExpression(pattern: pat, options: .caseInsensitive),
+              let m = re.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) else { return nil }
+        func g(_ i: Int) -> String { String(t[Range(m.range(at: i), in: t)!]) }
+        return "\(g(1)) Ngách \(g(3))/\(g(2)) \(g(4))"
+    }
+
     /// "Phường Vĩnh Hưng, Thành Phố Hà Nội, Việt Nam" -> "Hà Nội"
     static func city(_ detail: String) -> String? {
         let parts = detail.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -73,9 +82,10 @@ enum TripDistance {
 
     /// Chạy song song nhiều câu tìm, chấm điểm: khớp chữ, trừ điểm nếu xa `near` (khi `nearWeight` > 0).
     static func locate(title: String, detail: String, near: CLLocationCoordinate2D,
-                       spanDeg: Double, nearWeight: Double) async -> Place? {
+                       spanDeg: Double, nearWeight: Double, targetKm: Double? = nil) async -> Place? {
         var qs: [String] = []
         let c = city(detail)
+        if let h = hanoiStyle(title) { qs.append(c.map { "\(h), \($0)" } ?? h) }
         if !title.isEmpty, let c { qs.append("\(title), \(c)") }
         if !title.isEmpty && !detail.isEmpty { qs.append("\(title), \(detail)") }
         if !title.isEmpty { qs.append(title) }
@@ -93,9 +103,23 @@ enum TripDistance {
         let want = tokens(title).union(tokens(detail))
         let wantPairs = bigrams(title).union(bigrams(detail))
         let here = CLLocation(latitude: near.latitude, longitude: near.longitude)
+        let wantsStreet = want.contains { $0.allSatisfy(\.isNumber) }
+        // Nếu không kết quả nào ở gần đúng khoảng cách màn hình báo (vd. đang thử bằng ảnh chụp ở nơi khác)
+        // thì bỏ qua tiêu chí khoảng cách.
+        let nearest = items.compactMap { $0.placemark.location?.distance(from: here) }.min().map { $0 / 1000 } ?? 1e6
+        let targetKm = targetKm.flatMap { nearest <= $0 * 0.8 + 3 ? $0 : nil }
         func score(_ i: MKMapItem) -> Double {
             let km = (i.placemark.location?.distance(from: here) ?? 1e6) / 1000
-            return textScore(want, wantPairs, i) - nearWeight * min(km, 30)
+            var sc = textScore(want, wantPairs, i)
+            // Địa chỉ có số nhà mà kết quả chỉ là cả phường/xã -> trừ điểm.
+            if wantsStreet && i.placemark.thoroughfare == nil && i.placemark.subThoroughfare == nil { sc -= 3 }
+            if let target = targetKm {
+                // Biết khoảng cách xe → điểm đón (theo đường đi): đường chim bay thường ngắn hơn ~20%.
+                sc -= 2 * min(abs(km - target * 0.8), 30)
+            } else {
+                sc -= nearWeight * min(km, 30)
+            }
+            return sc
         }
         let best = items.max { a, b in score(a) < score(b) }!
         return Place(item: best)
@@ -137,7 +161,8 @@ enum TripDistance {
         let (me, known) = currentCoordinate()
         // Điểm đón: ở gần xe -> trừ điểm mạnh nếu xa vị trí hiện tại.
         guard let p = await locate(title: t.pickupTitle, detail: t.pickupDetail, near: me,
-                                   spanDeg: 0.15, nearWeight: known ? 0.5 : 0.05) else {
+                                   spanDeg: 0.15, nearWeight: known ? 0.5 : 0.05,
+                                   targetKm: known ? t.driverKm : nil) else {
             lastInfo = (3, 0, 0); update("Đón → Trả: không tìm được điểm đón", t.pickupTitle); return
         }
         guard let d = await locate(title: t.dropoffTitle, detail: t.dropoffDetail,
