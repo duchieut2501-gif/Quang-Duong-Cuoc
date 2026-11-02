@@ -29,6 +29,8 @@ extern "C" char **environ;
 #define NOTIFY_OVERLAY "com.quangduongcuoc.overlay"
 #define EXT_ID @"com.quangduongcuoc.app.broadcast"
 #define GAP_POINTS 48.0  // ~8 mm
+#define TEST_PATH @"/var/mobile/Library/Caches/com.quangduongcuoc.overlay.json"
+#define STATUS_PATH @"/var/mobile/Library/Caches/com.quangduongcuoc.hud.status"
 
 #define POSIX_SPAWN_PERSONA_FLAGS_OVERRIDE 1
 extern "C" int posix_spawnattr_set_persona_np(const posix_spawnattr_t *__restrict, uid_t, uint32_t);
@@ -56,6 +58,31 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__res
     NSLayoutConstraint *_top;
     NSString *_extDir;
     NSTimer *_autoHide;
+    NSDate *_lastSeen;
+}
+
+- (void)writeStatus {
+    NSString *st = [NSString stringWithFormat:@"Chữ nổi đang chạy (pid %d). Dữ liệu từ phần đọc màn hình: %@",
+                    getpid(), [self extensionDir] ? @"đã tìm thấy" : @"chưa thấy (hãy bật phát màn hình 1 lần)"];
+    [st writeToFile:STATUS_PATH atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+static NSDate *MTime(NSString *path) {
+    return [[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileModificationDate];
+}
+
+// Kiểm tra file mới 2 lần/giây (dự phòng nếu tín hiệu báo không tới).
+- (void)poll {
+    NSString *dir = [self extensionDir];
+    NSString *extFile = dir ? [dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"] : nil;
+    NSString *best = nil; NSDate *bestT = nil;
+    for (NSString *f in extFile ? @[extFile, TEST_PATH] : @[TEST_PATH]) {
+        NSDate *t = MTime(f);
+        if (t && (!bestT || [t compare:bestT] == NSOrderedDescending)) { best = f; bestT = t; }
+    }
+    if (!best || (_lastSeen && [bestT compare:_lastSeen] != NSOrderedDescending)) return;
+    _lastSeen = bestT;
+    [self apply:[NSData dataWithContentsOfFile:best]];
 }
 
 - (void)viewDidLoad {
@@ -101,8 +128,12 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__res
     int token;
     __weak typeof(self) weakSelf = self;
     notify_register_dispatch(NOTIFY_OVERLAY, &token, dispatch_get_main_queue(), ^(int t) {
-        [weakSelf reload];
+        [weakSelf poll];
     });
+    _lastSeen = [NSDate date];   // bỏ qua dữ liệu cũ lúc mới bật
+    [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) { [weakSelf poll]; }];
+    [NSTimer scheduledTimerWithTimeInterval:10 repeats:YES block:^(NSTimer *t) { [weakSelf writeStatus]; }];
+    [self writeStatus];
 }
 
 // Tìm thư mục dữ liệu của extension "phát màn hình" (nơi nó ghi overlay.json).
@@ -113,15 +144,16 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__res
         NSString *dir = [root stringByAppendingPathComponent:u];
         NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:
             [dir stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];
-        if ([meta[@"MCMMetadataIdentifier"] isEqualToString:EXT_ID]) { _extDir = dir; break; }
+        if ([meta[@"MCMMetadataIdentifier"] isEqualToString:EXT_ID] &&
+            [NSFileManager.defaultManager fileExistsAtPath:[dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"]]) {
+            _extDir = dir; break;
+        }
     }
     return _extDir;
 }
 
-- (void)reload {
-    NSString *dir = [self extensionDir];
-    NSData *d = dir ? [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"]] : nil;
-    if (!d) { _extDir = nil; return; }   // thử tìm lại lần sau
+- (void)apply:(NSData *)d {
+    if (!d) return;
     NSDictionary *j = [NSJSONSerialization JSONObjectWithData:d options:0 error:nil];
     if (![j isKindOfClass:NSDictionary.class]) return;
 
@@ -214,7 +246,6 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__res
     [inv setArgument:&ctx atIndex:2];
     [inv setArgument:&level atIndex:3];
     [inv invoke];
-    [(QDHUDViewController *)self.window.rootViewController performSelector:@selector(reload)];
     return YES;
 }
 @end
@@ -307,6 +338,21 @@ static int SpawnSelf(const char *arg, BOOL wait) {
 }
 
 BOOL IsOverlayEnabled(void) { return SpawnSelf("-check", YES) == 1; }
+
+NSString *OverlayStatus(void) {
+    if (!CheckOverlayHUD()) return @"Chữ nổi chưa chạy.";
+    return [NSString stringWithContentsOfFile:STATUS_PATH encoding:NSUTF8StringEncoding error:nil] ?: @"Chữ nổi đang khởi động…";
+}
+
+void TestOverlay(void) {
+    NSDictionary *j = @{@"show": @YES, @"y": @0.45, @"title": @"Thử chữ nổi: 12,3 km • 25 phút", @"sub": @"Nếu thấy dòng này là chữ nổi đã chạy"};
+    [[NSJSONSerialization dataWithJSONObject:j options:0 error:nil] writeToFile:TEST_PATH atomically:YES];
+    notify_post(NOTIFY_OVERLAY);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [[NSJSONSerialization dataWithJSONObject:@{@"show": @NO} options:0 error:nil] writeToFile:TEST_PATH atomically:YES];
+        notify_post(NOTIFY_OVERLAY);
+    });
+}
 
 void SetOverlayEnabled(BOOL on) {
     notify_post(NOTIFY_DISMISS);

@@ -44,6 +44,7 @@ struct ContentView: View {
     @State private var showPicker = false
     @State private var locOK = false
     @State private var overlayOn = false
+    @State private var overlayStatus = ""
 
     var body: some View {
         NavigationView {
@@ -63,8 +64,15 @@ struct ContentView: View {
                         footer: Text("Hiện quãng đường ngay dưới địa chỉ điểm đến (cách khoảng 8 mm). Chữ không cản bấm \"Nhận chuyến\".")) {
                     Toggle("Bật chữ nổi", isOn: Binding(get: { overlayOn }, set: { v in
                         overlayOn = v
-                        DispatchQueue.global().async { SetOverlayEnabled(v) }
+                        DispatchQueue.global().async {
+                            SetOverlayEnabled(v)
+                            Thread.sleep(forTimeInterval: 1.5)
+                            refreshOverlay()
+                        }
                     }))
+                    Button("Thử chữ nổi (hiện 5 giây)") { TestOverlay() }
+                    Button("Kiểm tra trạng thái") { DispatchQueue.global().async { refreshOverlay() } }
+                    if !overlayStatus.isEmpty { Text(overlayStatus).font(.footnote).foregroundColor(.secondary) }
                 }
                 Section(header: Text("Bước 2 — Bật đọc màn hình"),
                         footer: Text("Bấm biểu tượng, chọn \"Quãng Đường\" rồi \"Bắt đầu phát\". Sau đó mở app Xanh SM. Khi có cuốc, thông báo quãng đường đón → trả sẽ hiện ở mép trên. Tắt bằng cách bấm chấm đỏ trên thanh trạng thái.")) {
@@ -85,14 +93,17 @@ struct ContentView: View {
         .onAppear {
             LocAsk.shared.onChange = { st in DispatchQueue.main.async { locOK = st == .authorizedAlways || st == .authorizedWhenInUse } }
             LocAsk.shared.onChange?(LocAsk.shared.lm.authorizationStatus)
-            DispatchQueue.global().async {
-                let on = IsOverlayEnabled()
-                DispatchQueue.main.async { overlayOn = on }
-            }
+            DispatchQueue.global().async { refreshOverlay() }
             UNUserNotificationCenter.current().getNotificationSettings { s in
                 DispatchQueue.main.async { notifOK = s.authorizationStatus == .authorized }
             }
         }
+    }
+
+    private func refreshOverlay() {
+        let on = IsOverlayEnabled()
+        let st = OverlayStatus()
+        DispatchQueue.main.async { overlayOn = on; overlayStatus = st }
     }
 
     private func test(_ ui: UIImage) {
