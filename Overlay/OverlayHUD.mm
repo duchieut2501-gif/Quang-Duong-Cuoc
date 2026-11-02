@@ -27,7 +27,6 @@ extern "C" char **environ;
 #define PID_PATH "/var/mobile/Library/Caches/com.quangduongcuoc.hud.pid"
 #define NOTIFY_DISMISS "com.quangduongcuoc.hud.dismiss"
 #define NOTIFY_OVERLAY "com.quangduongcuoc.overlay"
-#define EXT_ID @"com.quangduongcuoc.app.broadcast"
 #define GAP_POINTS 48.0  // ~8 mm
 #define TEST_PATH @"/var/mobile/Library/Caches/com.quangduongcuoc.overlay.json"
 #define STATUS_PATH @"/var/mobile/Library/Caches/com.quangduongcuoc.hud.status"
@@ -60,46 +59,26 @@ static NSDate *MTime(NSString *path) {
     UILabel *_title;
     UILabel *_sub;
     NSLayoutConstraint *_top;
-    NSString *_extDir;
     NSTimer *_autoHide;
     NSDate *_lastSeen;
+    int _stateCount;
+    uint64_t _lastState;
 }
 
 - (void)writeStatus {
-    NSMutableString *st = [NSMutableString stringWithFormat:@"Chữ nổi đang chạy (pid %d).\n", getpid()];
-    // Liệt kê mọi thư mục dữ liệu của extension để xem file overlay.json có ở đó không.
-    NSString *root = @"/var/mobile/Containers/Data/PluginKitPlugin";
-    NSArray *all = [NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil];
-    int n = 0;
-    for (NSString *u in all) {
-        NSString *dir = [root stringByAppendingPathComponent:u];
-        NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:
-            [dir stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];
-        NSString *ident = meta[@"MCMMetadataIdentifier"];
-        if (![ident containsString:@"quangduongcuoc"]) continue;
-        n++;
-        NSString *f = [dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"];
-        NSDate *t = MTime(f);
-        [st appendFormat:@"• %@: %@\n", [u substringToIndex:MIN(8, u.length)],
-            t ? [NSString stringWithFormat:@"có dữ liệu, cập nhật %.0f giây trước", -t.timeIntervalSinceNow] : @"chưa có dữ liệu"];
-    }
-    [st appendFormat:@"Số thư mục extension: %d / tổng %lu", n, (unsigned long)all.count];
+    NSDate *t = MTime(TEST_PATH);
+    NSString *st = [NSString stringWithFormat:@"Chữ nổi đang chạy (pid %d).\nTín hiệu nhận được: %d lần.\nFile chung: %@",
+        getpid(), _stateCount,
+        t ? [NSString stringWithFormat:@"cập nhật %.0f giây trước", -t.timeIntervalSinceNow] : @"chưa có"];
     [st writeToFile:STATUS_PATH atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-
 // Kiểm tra file mới 2 lần/giây (dự phòng nếu tín hiệu báo không tới).
 - (void)poll {
-    NSString *dir = [self extensionDir];
-    NSString *extFile = dir ? [dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"] : nil;
-    NSString *best = nil; NSDate *bestT = nil;
-    for (NSString *f in extFile ? @[extFile, TEST_PATH] : @[TEST_PATH]) {
-        NSDate *t = MTime(f);
-        if (t && (!bestT || [t compare:bestT] == NSOrderedDescending)) { best = f; bestT = t; }
-    }
-    if (!best || (_lastSeen && [bestT compare:_lastSeen] != NSOrderedDescending)) return;
-    _lastSeen = bestT;
-    [self apply:[NSData dataWithContentsOfFile:best]];
+    NSDate *t = MTime(TEST_PATH);
+    if (!t || (_lastSeen && [t compare:_lastSeen] != NSOrderedDescending)) return;
+    _lastSeen = t;
+    [self apply:[NSData dataWithContentsOfFile:TEST_PATH]];
 }
 
 - (void)viewDidLoad {
@@ -145,7 +124,9 @@ static NSDate *MTime(NSString *path) {
     int token;
     __weak typeof(self) weakSelf = self;
     notify_register_dispatch(NOTIFY_OVERLAY, &token, dispatch_get_main_queue(), ^(int t) {
-        [weakSelf poll];
+        uint64_t v = 0;
+        notify_get_state(t, &v);
+        [weakSelf applyState:v];
     });
     _lastSeen = [NSDate date];   // bỏ qua dữ liệu cũ lúc mới bật
     [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) { [weakSelf poll]; }];
@@ -153,20 +134,33 @@ static NSDate *MTime(NSString *path) {
     [self writeStatus];
 }
 
-// Tìm thư mục dữ liệu của extension "phát màn hình" (nơi nó ghi overlay.json).
-- (NSString *)extensionDir {
-    if (_extDir) return _extDir;
-    NSString *root = @"/var/mobile/Containers/Data/PluginKitPlugin";
-    for (NSString *u in [NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil]) {
-        NSString *dir = [root stringByAppendingPathComponent:u];
-        NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:
-            [dir stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];
-        if ([meta[@"MCMMetadataIdentifier"] isEqualToString:EXT_ID] &&
-            [NSFileManager.defaultManager fileExistsAtPath:[dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"]]) {
-            _extDir = dir; break;
-        }
+static NSString *FmtKm(double m) {
+    return [[NSString stringWithFormat:@"%.2f km", m / 1000.0] stringByReplacingOccurrencesOfString:@"." withString:@","];
+}
+
+// Dựng chữ từ 64 bit số liệu do phần đọc màn hình gửi (xem OverlayWriter.swift).
+- (void)applyState:(uint64_t)v {
+    _stateCount++;
+    _lastState = v;
+    // Nếu file chung vừa được ghi (có đủ chữ) thì dùng file, không dựng lại.
+    NSDate *t = MTime(TEST_PATH);
+    if (t && -t.timeIntervalSinceNow < 0.3) { [self poll]; return; }
+    BOOL show = (v >> 63) & 1;
+    if (!show) { [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @NO} options:0 error:nil]]; return; }
+    double y = ((v >> 52) & 0x7FF) / 1000.0;
+    int stage = (int)((v >> 50) & 0x3);
+    int mins = (int)((v >> 36) & 0x3FFF);
+    double meters = ((v >> 12) & 0xFFFFFF) * 10.0;
+    NSString *title;
+    switch (stage) {
+        case 0: title = @"Đang tính quãng đường…"; break;
+        case 1: title = [NSString stringWithFormat:@"Đón → Trả ≈ %@ (ước tính)", FmtKm(meters)]; break;
+        case 2: title = [NSString stringWithFormat:@"Đón → Trả: %@ • %@", FmtKm(meters),
+                         mins >= 60 ? [NSString stringWithFormat:@"%d giờ %d phút", mins / 60, mins % 60]
+                                    : [NSString stringWithFormat:@"%d phút", mins]]; break;
+        default: title = @"Đón → Trả: không tìm được vị trí"; break;
     }
-    return _extDir;
+    [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @YES, @"y": @(y), @"title": title, @"sub": @""} options:0 error:nil]];
 }
 
 - (void)apply:(NSData *)d {

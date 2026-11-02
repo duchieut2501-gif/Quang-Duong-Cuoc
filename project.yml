@@ -54,3 +54,4 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quangduongcuoc.app.broadcast
+        SWIFT_OBJC_BRIDGING_HEADER: Broadcast/BroadcastBridge.h

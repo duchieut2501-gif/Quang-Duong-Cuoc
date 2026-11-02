@@ -64,13 +64,15 @@ class SampleHandler: RPBroadcastSampleHandler {
             tripID += 1
             let id = tripID
             let y = reader.lastDropoffBottom
-            OverlayWriter.show(y: y, title: "Đang tính quãng đường…", sub: "")
+            OverlayWriter.show(y: y, stage: 0, meters: 0, seconds: 0, title: "Đang tính quãng đường…", sub: "")
             Task {
                 await TripDistance.run(t) { [weak self] title, body in
                     guard let self else { return }
                     self.queue.async {
                         guard id == self.tripID else { return }   // cuốc đã đổi
-                        OverlayWriter.show(y: y, title: title, sub: body)
+                        let i = TripDistance.lastInfo
+                        OverlayWriter.show(y: y, stage: i.stage, meters: i.meters, seconds: i.seconds,
+                                           title: title, sub: body)
                         if !title.contains("ước tính") { TripDistance.notify(title, body) }
                     }
                 }

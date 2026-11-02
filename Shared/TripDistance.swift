@@ -129,20 +129,24 @@ enum TripDistance {
         return (CLLocationCoordinate2D(latitude: 21.0285, longitude: 105.8542), false)
     }
 
+    /// Số liệu của lần cập nhật gần nhất: giai đoạn (1 ước tính, 2 chính xác, 3 lỗi), mét, giây.
+    static var lastInfo: (stage: Int, meters: Double, seconds: Double) = (0, 0, 0)
+
     /// Chạy toàn bộ: gửi số ước tính trước, rồi cập nhật số theo đường đi thật.
     static func run(_ t: TripText, update: @escaping (String, String) -> Void) async {
         let (me, known) = currentCoordinate()
         // Điểm đón: ở gần xe -> trừ điểm mạnh nếu xa vị trí hiện tại.
         guard let p = await locate(title: t.pickupTitle, detail: t.pickupDetail, near: me,
                                    spanDeg: 0.15, nearWeight: known ? 0.5 : 0.05) else {
-            update("Đón → Trả: không tìm được điểm đón", t.pickupTitle); return
+            lastInfo = (3, 0, 0); update("Đón → Trả: không tìm được điểm đón", t.pickupTitle); return
         }
         guard let d = await locate(title: t.dropoffTitle, detail: t.dropoffDetail,
                                    near: p.item.placemark.coordinate, spanDeg: 2, nearWeight: 0) else {
-            update("Đón → Trả: không tìm được điểm trả", t.dropoffTitle); return
+            lastInfo = (3, 0, 0); update("Đón → Trả: không tìm được điểm trả", t.dropoffTitle); return
         }
         let names = "Đón: \(name(p))\nTrả: \(name(d))"
         if let a = p.item.placemark.location, let b = d.item.placemark.location {
+            lastInfo = (1, a.distance(from: b) * 1.3, 0)
             update("Đón → Trả ≈ \(fmtKm(a.distance(from: b) * 1.3)) (ước tính)", names)
         }
         let r = MKDirections.Request()
@@ -150,6 +154,7 @@ enum TripDistance {
         r.destination = d.item
         r.transportType = .automobile
         if let route = try? await MKDirections(request: r).calculate().routes.first {
+            lastInfo = (2, route.distance, route.expectedTravelTime)
             update("Đón → Trả: \(fmtKm(route.distance)) • \(fmtTime(route.expectedTravelTime))", names)
         }
     }

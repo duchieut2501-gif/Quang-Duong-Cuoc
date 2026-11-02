@@ -1,28 +1,41 @@
 import Foundation
 
-/// Ghi nội dung chữ nổi ra file trong thư mục của extension rồi báo cho tiến trình HUD đọc.
-enum OverlayWriter {
-    private static let url: URL = {
-        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("overlay.json")
-    }()
 
-    /// `y`: mép dưới địa chỉ điểm đến, tính theo tỉ lệ chiều cao màn hình (0 = mép trên).
-    static func show(y: CGFloat, title: String, sub: String) {
-        write(["show": true, "y": Double(y), "title": title, "sub": sub])
+/// Gửi nội dung chữ nổi cho tiến trình HUD theo 2 đường:
+/// 1) file JSON ở chỗ chung (nếu iOS cho ghi), có đủ chữ;
+/// 2) tín hiệu hệ thống mang 64 bit số liệu (luôn đi được), HUD tự dựng chữ.
+enum OverlayWriter {
+    private static let name = "com.quangduongcuoc.overlay"
+    private static let sharedURL = URL(fileURLWithPath: "/var/mobile/Library/Caches/com.quangduongcuoc.overlay.json")
+    private static var token: Int32 = {
+        var t: Int32 = 0
+        notify_register_check(name, &t)
+        return t
+    }()
+    private static var seq: UInt64 = 0
+
+    /// `y`: mép dưới địa chỉ điểm đến (tỉ lệ chiều cao màn hình, 0 = mép trên).
+    /// `stage`: 0 đang tính, 1 ước tính, 2 chính xác, 3 lỗi.
+    static func show(y: CGFloat, stage: Int, meters: Double, seconds: Double, title: String, sub: String) {
+        send(show: true, y: y, stage: stage, meters: meters, seconds: seconds,
+             json: ["show": true, "y": Double(y), "title": title, "sub": sub])
     }
 
-    private static var warned = false
+    static func hide() { send(show: false, y: 0, stage: 0, meters: 0, seconds: 0, json: ["show": false]) }
 
-    static func hide() { write(["show": false]) }
-
-    private static func write(_ obj: [String: Any]) {
-        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        do { try d.write(to: url, options: .atomic) } catch {
-            if !warned { warned = true; TripDistance.notify("Chữ nổi: không ghi được dữ liệu", error.localizedDescription) }
+    private static func send(show: Bool, y: CGFloat, stage: Int, meters: Double, seconds: Double, json: [String: Any]) {
+        if let d = try? JSONSerialization.data(withJSONObject: json) {
+            try? d.write(to: sharedURL, options: .atomic)
         }
-        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
-            CFNotificationName("com.quangduongcuoc.overlay" as CFString), nil, nil, true)
+        // Bố cục 64 bit: [63] hiện | [52..62] y‰ | [50..51] giai đoạn | [36..49] phút | [12..35] đơn vị 10 m | [0..11] số thứ tự
+        seq = (seq + 1) & 0xFFF
+        var v: UInt64 = seq
+        v |= (UInt64(min(max(meters / 10, 0), 16_777_215)) & 0xFFFFFF) << 12
+        v |= (UInt64(min(max(seconds / 60, 0), 16_383)) & 0x3FFF) << 36
+        v |= (UInt64(stage) & 0x3) << 50
+        v |= (UInt64(min(max(y * 1000, 0), 2047)) & 0x7FF) << 52
+        if show { v |= 1 << 63 }
+        notify_set_state(token, v)
+        notify_post(name)
     }
 }
