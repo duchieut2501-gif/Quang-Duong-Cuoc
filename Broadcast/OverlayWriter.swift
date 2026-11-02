@@ -13,11 +13,15 @@ enum OverlayWriter {
         write(["show": true, "y": Double(y), "title": title, "sub": sub])
     }
 
+    private static var warned = false
+
     static func hide() { write(["show": false]) }
 
     private static func write(_ obj: [String: Any]) {
         guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return }
-        try? d.write(to: url, options: .atomic)
+        do { try d.write(to: url, options: .atomic) } catch {
+            if !warned { warned = true; TripDistance.notify("Chữ nổi: không ghi được dữ liệu", error.localizedDescription) }
+        }
         CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName("com.quangduongcuoc.overlay" as CFString), nil, nil, true)
     }

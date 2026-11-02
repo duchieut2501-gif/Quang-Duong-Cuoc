@@ -51,6 +51,10 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__res
 
 @interface QDHUDViewController : UIViewController
 @end
+
+static NSDate *MTime(NSString *path) {
+    return [[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileModificationDate];
+}
 @implementation QDHUDViewController {
     UIView *_pill;
     UILabel *_title;
@@ -62,14 +66,27 @@ extern "C" int posix_spawnattr_set_persona_gid_np(const posix_spawnattr_t *__res
 }
 
 - (void)writeStatus {
-    NSString *st = [NSString stringWithFormat:@"Chữ nổi đang chạy (pid %d). Dữ liệu từ phần đọc màn hình: %@",
-                    getpid(), [self extensionDir] ? @"đã tìm thấy" : @"chưa thấy (hãy bật phát màn hình 1 lần)"];
+    NSMutableString *st = [NSMutableString stringWithFormat:@"Chữ nổi đang chạy (pid %d).\n", getpid()];
+    // Liệt kê mọi thư mục dữ liệu của extension để xem file overlay.json có ở đó không.
+    NSString *root = @"/var/mobile/Containers/Data/PluginKitPlugin";
+    NSArray *all = [NSFileManager.defaultManager contentsOfDirectoryAtPath:root error:nil];
+    int n = 0;
+    for (NSString *u in all) {
+        NSString *dir = [root stringByAppendingPathComponent:u];
+        NSDictionary *meta = [NSDictionary dictionaryWithContentsOfFile:
+            [dir stringByAppendingPathComponent:@".com.apple.mobile_container_manager.metadata.plist"]];
+        NSString *ident = meta[@"MCMMetadataIdentifier"];
+        if (![ident containsString:@"quangduongcuoc"]) continue;
+        n++;
+        NSString *f = [dir stringByAppendingPathComponent:@"Library/Caches/overlay.json"];
+        NSDate *t = MTime(f);
+        [st appendFormat:@"• %@: %@\n", [u substringToIndex:MIN(8, u.length)],
+            t ? [NSString stringWithFormat:@"có dữ liệu, cập nhật %.0f giây trước", -t.timeIntervalSinceNow] : @"chưa có dữ liệu"];
+    }
+    [st appendFormat:@"Số thư mục extension: %d / tổng %lu", n, (unsigned long)all.count];
     [st writeToFile:STATUS_PATH atomically:YES encoding:NSUTF8StringEncoding error:nil];
 }
 
-static NSDate *MTime(NSString *path) {
-    return [[NSFileManager.defaultManager attributesOfItemAtPath:path error:nil] fileModificationDate];
-}
 
 // Kiểm tra file mới 2 lần/giây (dự phòng nếu tín hiệu báo không tới).
 - (void)poll {
@@ -132,7 +149,7 @@ static NSDate *MTime(NSString *path) {
     });
     _lastSeen = [NSDate date];   // bỏ qua dữ liệu cũ lúc mới bật
     [NSTimer scheduledTimerWithTimeInterval:0.5 repeats:YES block:^(NSTimer *t) { [weakSelf poll]; }];
-    [NSTimer scheduledTimerWithTimeInterval:10 repeats:YES block:^(NSTimer *t) { [weakSelf writeStatus]; }];
+    [NSTimer scheduledTimerWithTimeInterval:3 repeats:YES block:^(NSTimer *t) { [weakSelf writeStatus]; }];
     [self writeStatus];
 }
 
@@ -306,7 +323,7 @@ int ExitOverlayHUD(void) {
 
 int CheckOverlayHUD(void) {
     pid_t p = ReadPid();
-    return (p > 0 && kill(p, 0) == 0) ? 1 : 0;
+    return (p > 0 && (kill(p, 0) == 0 || errno == EPERM)) ? 1 : 0;
 }
 
 // Chạy chính file app này với tham số, dưới quyền root (TrollStore cho phép).
