@@ -94,14 +94,14 @@ static NSDate *MTime(NSString *path) {
     [self.view addSubview:_pill];
 
     _title = [UILabel new];
-    _title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightBold];
+    _title.font = [UIFont systemFontOfSize:17 weight:UIFontWeightBold];
     _title.textColor = UIColor.whiteColor;
     _title.textAlignment = NSTextAlignmentCenter;
     _title.adjustsFontSizeToFitWidth = YES;
     _sub = [UILabel new];
-    _sub.font = [UIFont systemFontOfSize:14 weight:UIFontWeightMedium];
+    _sub.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
     _sub.textColor = [UIColor colorWithWhite:0.85 alpha:1];
-    _sub.numberOfLines = 4;
+    _sub.numberOfLines = 0;
     _sub.textAlignment = NSTextAlignmentLeft;
 
     UIStackView *st = [[UIStackView alloc] initWithArrangedSubviews:@[_title, _sub]];
@@ -140,18 +140,18 @@ static NSString *FmtKm(double m) {
 
 // Đọc dòng chữ phụ (tên điểm đón/trả) từ các tín hiệu phụ.
 static NSString *ReadSubText(void) {
-    static int tokens[40];
+    static int tokens[160];
     static dispatch_once_t once;
     dispatch_once(&once, ^{
-        for (int i = 0; i < 40; i++)
+        for (int i = 0; i < 160; i++)
             notify_register_check([NSString stringWithFormat:@"%s.t%d", NOTIFY_OVERLAY, i].UTF8String, &tokens[i]);
     });
     uint64_t len = 0;
     notify_get_state(tokens[0], &len);
-    if (len == 0 || len > 39 * 8) return @"";
-    NSMutableData *d = [NSMutableData dataWithLength:39 * 8];
+    if (len == 0 || len > 159 * 8) return @"";
+    NSMutableData *d = [NSMutableData dataWithLength:159 * 8];
     uint8_t *b = (uint8_t *)d.mutableBytes;
-    for (int s = 1; s < 40; s++) {
+    for (int s = 1; s < 160; s++) {
         uint64_t v = 0;
         notify_get_state(tokens[s], &v);
         for (int k = 0; k < 8; k++) b[(s - 1) * 8 + k] = (v >> (8 * k)) & 0xFF;
@@ -170,19 +170,11 @@ static NSString *ReadSubText(void) {
     BOOL show = (v >> 63) & 1;
     if (!show) { [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @NO} options:0 error:nil]]; return; }
     double y = ((v >> 52) & 0x7FF) / 1000.0;
-    int stage = (int)((v >> 50) & 0x3);
-    int mins = (int)((v >> 36) & 0x3FFF);
-    double meters = ((v >> 12) & 0xFFFFFF) * 10.0;
-    NSString *title;
-    switch (stage) {
-        case 0: title = @"Đang tính quãng đường…"; break;
-        case 1: title = [NSString stringWithFormat:@"Đón → Trả ≈ %@ (ước tính)", FmtKm(meters)]; break;
-        case 2: title = [NSString stringWithFormat:@"Đón → Trả: %@ • %@", FmtKm(meters),
-                         mins >= 60 ? [NSString stringWithFormat:@"%d giờ %d phút", mins / 60, mins % 60]
-                                    : [NSString stringWithFormat:@"%d phút", mins]]; break;
-        default: title = @"Đón → Trả: không tìm được vị trí"; break;
-    }
-    [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @YES, @"y": @(y), @"title": title, @"sub": ReadSubText()} options:0 error:nil]];
+    NSString *text = ReadSubText();
+    NSRange nl = [text rangeOfString:@"\n"];
+    NSString *title = nl.location == NSNotFound ? text : [text substringToIndex:nl.location];
+    NSString *sub = nl.location == NSNotFound ? @"" : [text substringFromIndex:nl.location + 1];
+    [self apply:[NSJSONSerialization dataWithJSONObject:@{@"show": @YES, @"y": @(y), @"title": title, @"sub": sub} options:0 error:nil]];
 }
 
 - (void)apply:(NSData *)d {
@@ -199,7 +191,7 @@ static NSString *ReadSubText(void) {
     _sub.text = j[@"sub"] ?: @"";
     _sub.hidden = _sub.text.length == 0;
     CGFloat h = UIScreen.mainScreen.bounds.size.height;
-    _top.constant = MIN([j[@"y"] doubleValue] * h + GAP_POINTS, h - 220);
+    _top.constant = MIN([j[@"y"] doubleValue] * h + GAP_POINTS, h - 320);
     [self.view layoutIfNeeded];
     [UIView animateWithDuration:0.15 animations:^{ self->_pill.alpha = 1; }];
     // An toàn: tự ẩn sau 20 giây nếu không có lệnh ẩn.

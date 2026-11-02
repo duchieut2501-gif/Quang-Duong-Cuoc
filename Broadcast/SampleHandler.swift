@@ -16,6 +16,16 @@ class SampleHandler: RPBroadcastSampleHandler {
     private var lastReadAt = Date.distantPast
     private var tripID = 0
     private var misses = 0
+    // Các lần tìm của cuốc hiện tại (mỗi lần 1 dòng)
+    private let maxAttempts = 5
+    private var attempts = 0
+    private var lines: [String] = []
+    private var notified = false
+    private var y: CGFloat = 0.5
+
+    private func push() {
+        OverlayWriter.show(y: y, text: "Đón → Trả (đã tìm \(lines.count)/\(maxAttempts) lần)\n" + lines.joined(separator: "\n"))
+    }
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         DispatchQueue.main.async { LocationTracker.shared.start() }
@@ -40,15 +50,15 @@ class SampleHandler: RPBroadcastSampleHandler {
                 // Màn hình báo cuốc biến mất (2 lần liên tiếp) -> ẩn chữ nổi.
                 misses += 1
                 if misses == 2, current != nil {
-                    current = nil; currentMarkers = nil; tripID += 1
+                    current = nil; currentMarkers = nil; tripID += 1; attempts = 0; lines = []
                     OverlayWriter.hide()
                 }
                 return
             }
             misses = 0
-            // Cùng cuốc vẫn đang hiện: không đọc chữ lại (tiết kiệm pin), trừ khi đã quá 3 giây.
-            if let c = currentMarkers, abs(c.dropoffTop - m.dropoffTop) < 0.01,
-               abs(c.pickupTop - m.pickupTop) < 0.01, Date().timeIntervalSince(lastReadAt) < 3 { return }
+            // Đã đủ 5 lần tìm cho cuốc này: không đọc lại nữa (tiết kiệm pin), trừ khi cuốc đổi vị trí.
+            let sameSpot = currentMarkers.map { abs($0.dropoffTop - m.dropoffTop) < 0.01 && abs($0.pickupTop - m.pickupTop) < 0.01 } ?? false
+            if sameSpot && (attempts >= maxAttempts || Date().timeIntervalSince(lastReadAt) < 1.0) { return }
 
             guard let t = reader.readText(img, m) else {
                 if Date().timeIntervalSince(lastDiagAt) > 5 {
@@ -58,22 +68,37 @@ class SampleHandler: RPBroadcastSampleHandler {
                 return
             }
             lastReadAt = Date()
+            // Cuốc mới -> xoá danh sách kết quả cũ.
+            if !sameSpot || current.map({ !$0.sameTrip(t) }) ?? true {
+                tripID += 1
+                attempts = 0
+                lines = []
+                notified = false
+                y = reader.lastDropoffBottom
+            }
             currentMarkers = m
-            if t == current { return }   // chữ đọc khác đi -> tìm lại (như trước)
             current = t
-            tripID += 1
+            guard attempts < maxAttempts else { return }
+            // Mỗi lần tìm thêm 1 dòng bên dưới (tối đa 5 dòng).
+            let idx = attempts
+            attempts += 1
+            lines.append("\(idx + 1)) đang tìm…")
+            push()
             let id = tripID
-            let y = reader.lastDropoffBottom
-            OverlayWriter.show(y: y, stage: 0, meters: 0, seconds: 0, title: "Đang tính quãng đường…", sub: "")
             Task {
                 await TripDistance.run(t) { [weak self] title, body in
                     guard let self else { return }
                     self.queue.async {
-                        guard id == self.tripID else { return }   // cuốc đã đổi
-                        let i = TripDistance.lastInfo
-                        OverlayWriter.show(y: y, stage: i.stage, meters: i.meters, seconds: i.seconds,
-                                           title: title, sub: body)
-                        if !title.contains("ước tính") { TripDistance.notify(title, body) }
+                        guard id == self.tripID, idx < self.lines.count else { return }   // cuốc đã đổi
+                        let km = title.replacingOccurrences(of: "Đón → Trả: ", with: "")
+                            .replacingOccurrences(of: "Đón → Trả ", with: "")
+                        let names = body.replacingOccurrences(of: "\n", with: "  |  ")
+                        self.lines[idx] = "\(idx + 1)) \(km)\n    \(names)"
+                        self.push()
+                        if !self.notified, !title.contains("ước tính") {
+                            self.notified = true
+                            TripDistance.notify(title, body)
+                        }
                     }
                 }
             }

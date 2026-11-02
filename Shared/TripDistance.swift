@@ -182,13 +182,17 @@ enum TripDistance {
     static func run(_ t: TripText, update: @escaping (String, String) -> Void) async {
         let (me, known) = currentCoordinate()
         // Điểm đón: ở gần xe -> trừ điểm mạnh nếu xa vị trí hiện tại.
-        guard let p = await locate(title: t.pickupTitle, detail: t.pickupDetail, near: me,
-                                   spanDeg: 0.15, nearWeight: known ? 0.5 : 0.05,
-                                   targetKm: known ? t.driverKm : nil) else {
+        // Tìm điểm đón và điểm trả song song cho nhanh.
+        async let pickup = locate(title: t.pickupTitle, detail: t.pickupDetail, near: me,
+                                  spanDeg: 0.15, nearWeight: known ? 0.5 : 0.05,
+                                  targetKm: known ? t.driverKm : nil)
+        async let dropoff = locate(title: t.dropoffTitle, detail: t.dropoffDetail,
+                                   near: me, spanDeg: 2, nearWeight: 0)
+        let (pOpt, dOpt) = await (pickup, dropoff)
+        guard let p = pOpt else {
             lastInfo = (3, 0, 0); update("Đón → Trả: không tìm được điểm đón", t.pickupTitle); return
         }
-        guard let d = await locate(title: t.dropoffTitle, detail: t.dropoffDetail,
-                                   near: p.item.placemark.coordinate, spanDeg: 2, nearWeight: 0) else {
+        guard let d = dOpt else {
             lastInfo = (3, 0, 0); update("Đón → Trả: không tìm được điểm trả", t.dropoffTitle); return
         }
         let names = "Đón: \(name(p))\nTrả: \(name(d))"
