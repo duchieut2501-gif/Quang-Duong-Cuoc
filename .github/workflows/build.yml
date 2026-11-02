@@ -1,0 +1,36 @@
+name: Build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: brew install xcodegen ldid
+      - name: Build
+        run: |
+          xcodegen generate
+          xcodebuild -project QuangDuongCuoc.xcodeproj -scheme QuangDuongCuoc -configuration Release \
+            -sdk iphoneos -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" build | tail -40
+          test ${PIPESTATUS[0]} -eq 0
+      - name: Package .tipa
+        run: |
+          VER=$(grep MARKETING_VERSION project.yml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "VER=$VER" >> $GITHUB_ENV
+          APP=build/Build/Products/Release-iphoneos/QuangDuongCuoc.app
+          ldid -Sentitlements/broadcast.plist "$APP/PlugIns/CuocBroadcast.appex/CuocBroadcast"
+          ldid -Sentitlements/app.plist "$APP/QuangDuongCuoc"
+          mkdir Payload && cp -R "$APP" Payload/
+          zip -qry "QuangDuongCuoc_$VER.tipa" Payload
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.VER }}
+          name: v${{ env.VER }}
+          files: QuangDuongCuoc_${{ env.VER }}.tipa
+          make_latest: true

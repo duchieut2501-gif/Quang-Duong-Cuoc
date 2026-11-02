@@ -1,0 +1,45 @@
+name: QuangDuongCuoc
+options:
+  bundleIdPrefix: com.quangduongcuoc
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  QuangDuongCuoc:
+    type: application
+    platform: iOS
+    sources: [App, Shared]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: Quãng Đường
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSPhotoLibraryUsageDescription: Chọn ảnh chụp màn hình báo cuốc để thử.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quangduongcuoc.app
+    dependencies:
+      - target: CuocBroadcast
+  CuocBroadcast:
+    type: app-extension
+    platform: iOS
+    sources: [Broadcast, Shared]
+    info:
+      path: Broadcast/Info.plist
+      properties:
+        CFBundleDisplayName: Quãng Đường
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.broadcast-services-upload
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
+          RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.quangduongcuoc.app.broadcast
