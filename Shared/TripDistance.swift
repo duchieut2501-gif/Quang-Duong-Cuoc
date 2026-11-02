@@ -104,8 +104,8 @@ enum TripDistance {
     // MARK: Hiển thị
 
     static func fmtKm(_ m: CLLocationDistance) -> String {
-        let km = m / 1000
-        return km < 10 ? String(format: "%.1f km", km) : String(format: "%.0f km", km)
+        // Ví dụ 15,23 km (dấu phẩy kiểu Việt Nam)
+        String(format: "%.2f km", m / 1000).replacingOccurrences(of: ".", with: ",")
     }
 
     static func fmtTime(_ s: TimeInterval) -> String {
