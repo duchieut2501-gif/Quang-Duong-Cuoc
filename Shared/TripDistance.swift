@@ -54,6 +54,20 @@ enum TripDistance {
         return "\(g(1)) Ngách \(g(3))/\(g(2)) \(g(4))"
     }
 
+    /// Tên địa điểm trong dòng in đậm: tách theo " - " và ngoặc, bỏ phần là địa chỉ số nhà.
+    /// "Cổng 2 (Chùa Láng) - Bệnh viện Nhi Trung ương" -> ["Chùa Láng", "Bệnh viện Nhi Trung ương"]
+    static func placeNames(_ title: String) -> [String] {
+        let parts = title.components(separatedBy: CharacterSet(charactersIn: "-–()"))
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return parts.filter { p in
+            guard p.count >= 4, let f = p.first, !f.isNumber else { return false }
+            let w = words(p)
+            if w.isEmpty { return false }
+            // Bỏ phần chỉ là "Cổng 2", "Ngõ 5"...
+            return !(w.count <= 2 && w.contains { $0.allSatisfy(\.isNumber) })
+        }
+    }
+
     /// "Phường Vĩnh Hưng, Thành Phố Hà Nội, Việt Nam" -> "Hà Nội"
     static func city(_ detail: String) -> String? {
         let parts = detail.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
@@ -90,6 +104,9 @@ enum TripDistance {
         if !title.isEmpty && !detail.isEmpty { qs.append("\(title), \(detail)") }
         if !title.isEmpty { qs.append(title) }
         if !detail.isEmpty { qs.append(detail) }
+        // Tìm thêm theo tên địa điểm (chùa, bệnh viện, trường…): Apple Maps tìm tên tốt hơn số nhà.
+        let names = placeNames(title)
+        for n in names { qs.append(c.map { "\(n), \($0)" } ?? n) }
         let geoQ = qs.first ?? detail
 
         let items: [MKMapItem] = await withTaskGroup(of: [MKMapItem].self) { g in
@@ -103,7 +120,9 @@ enum TripDistance {
         let want = tokens(title).union(tokens(detail))
         let wantPairs = bigrams(title).union(bigrams(detail))
         let here = CLLocation(latitude: near.latitude, longitude: near.longitude)
-        let wantsStreet = want.contains { $0.allSatisfy(\.isNumber) }
+        // Chỉ coi là địa chỉ số nhà khi dòng in đậm bắt đầu bằng số (vd. "16 Ngách 4…").
+        let wantsStreet = title.first?.isNumber ?? false
+        let nameToks = names.map { tokens($0) }.filter { !$0.isEmpty }
         // Nếu không kết quả nào ở gần đúng khoảng cách màn hình báo (vd. đang thử bằng ảnh chụp ở nơi khác)
         // thì bỏ qua tiêu chí khoảng cách.
         let nearest = items.compactMap { $0.placemark.location?.distance(from: here) }.min().map { $0 / 1000 } ?? 1e6
@@ -111,6 +130,9 @@ enum TripDistance {
         func score(_ i: MKMapItem) -> Double {
             let km = (i.placemark.location?.distance(from: here) ?? 1e6) / 1000
             var sc = textScore(want, wantPairs, i)
+            // Kết quả có tên chứa trọn tên địa điểm (vd. "Chùa Quang Ấm") -> cộng điểm lớn.
+            let itemToks = tokens(i.name ?? "")
+            if nameToks.contains(where: { $0.isSubset(of: itemToks) }) { sc += 5 }
             // Địa chỉ có số nhà mà kết quả chỉ là cả phường/xã -> trừ điểm.
             if wantsStreet && i.placemark.thoroughfare == nil && i.placemark.subThoroughfare == nil { sc -= 3 }
             if let target = targetKm {

@@ -59,7 +59,7 @@ class SampleHandler: RPBroadcastSampleHandler {
             }
             lastReadAt = Date()
             currentMarkers = m
-            if let c = current, c.sameTrip(t) { return }   // cùng cuốc: không tính lại
+            if t == current { return }   // chữ đọc khác đi -> tìm lại (như trước)
             current = t
             tripID += 1
             let id = tripID
