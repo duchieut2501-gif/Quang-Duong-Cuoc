@@ -2,6 +2,16 @@ import SwiftUI
 import PhotosUI
 import ReplayKit
 import UserNotifications
+import CoreLocation
+
+final class LocAsk: NSObject, CLLocationManagerDelegate {
+    static let shared = LocAsk()
+    let lm = CLLocationManager()
+    var onChange: ((CLAuthorizationStatus) -> Void)?
+    override init() { super.init(); lm.delegate = self }
+    func ask() { lm.requestAlwaysAuthorization() }
+    func locationManagerDidChangeAuthorization(_ m: CLLocationManager) { onChange?(m.authorizationStatus) }
+}
 
 @main
 struct QuangDuongApp: App {
@@ -23,6 +33,7 @@ struct ContentView: View {
     @State private var notifOK = false
     @State private var testResult = ""
     @State private var showPicker = false
+    @State private var locOK = false
 
     var body: some View {
         NavigationView {
@@ -33,6 +44,10 @@ struct ContentView: View {
                             DispatchQueue.main.async { notifOK = ok }
                         }
                     }
+                }
+                Section(header: Text("Vị trí"),
+                        footer: Text("Giúp tìm đúng điểm đón (điểm đón luôn ở gần xe). Nên chọn \"Luôn luôn\".")) {
+                    Button(locOK ? "✅ Đã cho phép vị trí" : "Cho phép vị trí") { LocAsk.shared.ask() }
                 }
                 Section(header: Text("Bước 2 — Bật đọc màn hình"),
                         footer: Text("Bấm biểu tượng, chọn \"Quãng Đường\" rồi \"Bắt đầu phát\". Sau đó mở app Xanh SM. Khi có cuốc, thông báo quãng đường đón → trả sẽ hiện ở mép trên. Tắt bằng cách bấm chấm đỏ trên thanh trạng thái.")) {
@@ -51,6 +66,8 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showPicker) { ImagePicker { test($0) } }
         .onAppear {
+            LocAsk.shared.onChange = { st in DispatchQueue.main.async { locOK = st == .authorizedAlways || st == .authorizedWhenInUse } }
+            LocAsk.shared.onChange?(LocAsk.shared.lm.authorizationStatus)
             UNUserNotificationCenter.current().getNotificationSettings { s in
                 DispatchQueue.main.async { notifOK = s.authorizationStatus == .authorized }
             }

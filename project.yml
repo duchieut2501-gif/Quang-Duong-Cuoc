@@ -23,6 +23,8 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSPhotoLibraryUsageDescription: Chọn ảnh chụp màn hình báo cuốc để thử.
+        NSLocationWhenInUseUsageDescription: Dùng vị trí xe để tìm đúng điểm đón.
+        NSLocationAlwaysAndWhenInUseUsageDescription: Dùng vị trí xe để tìm đúng điểm đón khi đang chạy nền.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quangduongcuoc.app
@@ -40,6 +42,7 @@ targets:
           NSExtensionPointIdentifier: com.apple.broadcast-services-upload
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).SampleHandler
           RPBroadcastProcessMode: RPBroadcastProcessModeSampleBuffer
+        NSLocationWhenInUseUsageDescription: Dùng vị trí xe để tìm đúng điểm đón.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quangduongcuoc.app.broadcast

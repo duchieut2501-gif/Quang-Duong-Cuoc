@@ -4,40 +4,88 @@ import UserNotifications
 
 /// Tìm vị trí 2 địa chỉ bằng Apple Maps, tính quãng đường và gửi thông báo nổi.
 enum TripDistance {
-    private static let vnRegion = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 18.5, longitude: 106.0),
-        span: MKCoordinateSpan(latitudeDelta: 16, longitudeDelta: 10))
+    struct Place { let item: MKMapItem }
 
-    struct Place { let item: MKMapItem; let query: String }
+    // MARK: So khớp chữ
 
-    static func search(_ q: String) async -> MKMapItem? {
+    private static let generic: Set<String> = [
+        "duong", "ngo", "ngach", "hem", "kiet", "pho", "phuong", "p", "xa", "x", "thon", "xom",
+        "thanh", "tinh", "quan", "q", "huyen", "tp", "viet", "so", "to", "khu", "ap"]
+
+    static func fold(_ s: String) -> String {
+        s.replacingOccurrences(of: "đ", with: "d").replacingOccurrences(of: "Đ", with: "D")
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "vi"))
+    }
+
+    static func tokens(_ s: String) -> Set<String> {
+        Set(fold(s).components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty && !generic.contains($0) })
+    }
+
+    /// Điểm khớp: số nhà/ngõ trùng = 2 điểm, chữ trùng = 1 điểm.
+    static func textScore(_ want: Set<String>, _ item: MKMapItem) -> Double {
+        let pm = item.placemark
+        let have = tokens([item.name, pm.subThoroughfare, pm.thoroughfare, pm.subLocality, pm.locality,
+                           pm.subAdministrativeArea].compactMap { $0 }.joined(separator: " "))
+        return want.intersection(have).reduce(0) { $0 + ($1.allSatisfy(\.isNumber) ? 2 : 1) }
+    }
+
+    /// "Phường Vĩnh Hưng, Thành Phố Hà Nội, Việt Nam" -> "Hà Nội"
+    static func city(_ detail: String) -> String? {
+        let parts = detail.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && fold($0) != "viet nam" }
+        guard var c = parts.last else { return nil }
+        for p in ["Thành phố ", "Thành Phố ", "Tỉnh ", "TP. ", "TP "] where c.hasPrefix(p) {
+            c = String(c.dropFirst(p.count))
+        }
+        return c
+    }
+
+    // MARK: Tìm kiếm
+
+    static func search(_ q: String, near c: CLLocationCoordinate2D, spanDeg: Double) async -> [MKMapItem] {
         let r = MKLocalSearch.Request()
         r.naturalLanguageQuery = q
-        r.region = vnRegion
-        return try? await MKLocalSearch(request: r).start().mapItems.first
+        r.region = MKCoordinateRegion(center: c, span: MKCoordinateSpan(latitudeDelta: spanDeg, longitudeDelta: spanDeg))
+        return Array(((try? await MKLocalSearch(request: r).start().mapItems) ?? []).prefix(8))
     }
 
-    static func geocode(_ q: String) async -> MKMapItem? {
-        guard let p = try? await CLGeocoder().geocodeAddressString(q, in: nil,
-                                preferredLocale: Locale(identifier: "vi_VN")).first else { return nil }
-        return MKMapItem(placemark: MKPlacemark(placemark: p))
+    static func geocode(_ q: String) async -> [MKMapItem] {
+        let ps = (try? await CLGeocoder().geocodeAddressString(q, in: nil,
+                        preferredLocale: Locale(identifier: "vi_VN"))) ?? []
+        return ps.map { MKMapItem(placemark: MKPlacemark(placemark: $0)) }
     }
 
-    /// Thử lần lượt: tiêu đề + chi tiết, chỉ tiêu đề, chỉ chi tiết.
-    static func locate(title: String, detail: String) async -> Place? {
-        let t = title, d = detail
-        var tries: [String] = []
-        if !t.isEmpty && !d.isEmpty { tries.append("\(t), \(d)") }
-        if !t.isEmpty { tries.append("\(t), Việt Nam") }
-        if !d.isEmpty { tries.append(d) }
-        for q in tries {
-            if let i = await search(q) { return Place(item: i, query: q) }
+    /// Chạy song song nhiều câu tìm, chấm điểm: khớp chữ, trừ điểm nếu xa `near` (khi `nearWeight` > 0).
+    static func locate(title: String, detail: String, near: CLLocationCoordinate2D,
+                       spanDeg: Double, nearWeight: Double) async -> Place? {
+        var qs: [String] = []
+        let c = city(detail)
+        if !title.isEmpty, let c { qs.append("\(title), \(c)") }
+        if !title.isEmpty && !detail.isEmpty { qs.append("\(title), \(detail)") }
+        if !title.isEmpty { qs.append(title) }
+        if !detail.isEmpty { qs.append(detail) }
+        let geoQ = qs.first ?? detail
+
+        let items: [MKMapItem] = await withTaskGroup(of: [MKMapItem].self) { g in
+            for q in qs { g.addTask { await search(q, near: near, spanDeg: spanDeg) } }
+            g.addTask { await geocode(geoQ) }
+            var all: [MKMapItem] = []
+            for await r in g { all += r }
+            return all
         }
-        for q in tries {
-            if let i = await geocode(q) { return Place(item: i, query: q) }
+        guard !items.isEmpty else { return nil }
+        let want = tokens(title).isEmpty ? tokens(detail) : tokens(title).union(tokens(detail))
+        let here = CLLocation(latitude: near.latitude, longitude: near.longitude)
+        func score(_ i: MKMapItem) -> Double {
+            let km = (i.placemark.location?.distance(from: here) ?? 1e6) / 1000
+            return textScore(want, i) - nearWeight * min(km, 30)
         }
-        return nil
+        let best = items.max { a, b in score(a) < score(b) }!
+        return Place(item: best)
     }
+
+    // MARK: Hiển thị
 
     static func fmtKm(_ m: CLLocationDistance) -> String {
         let km = m / 1000
@@ -51,25 +99,36 @@ enum TripDistance {
 
     static func name(_ p: Place) -> String {
         let pm = p.item.placemark
-        return [p.item.name, pm.subAdministrativeArea ?? pm.locality, pm.administrativeArea]
+        return [p.item.name, pm.subLocality, pm.locality ?? pm.administrativeArea]
             .compactMap { $0 }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
             .joined(separator: ", ")
     }
 
+    /// Vị trí hiện tại của máy (nếu đã cho phép), mặc định trung tâm Hà Nội.
+    static func currentCoordinate() -> (CLLocationCoordinate2D, Bool) {
+        if let l = LocationTracker.shared.last ?? CLLocationManager().location,
+           Date().timeIntervalSince(l.timestamp) < 1800 {
+            return (l.coordinate, true)
+        }
+        return (CLLocationCoordinate2D(latitude: 21.0285, longitude: 105.8542), false)
+    }
+
     /// Chạy toàn bộ: gửi số ước tính trước, rồi cập nhật số theo đường đi thật.
-    /// `update` nhận nội dung (tiêu đề, thân) mỗi khi có kết quả mới.
     static func run(_ t: TripText, update: @escaping (String, String) -> Void) async {
-        async let a = locate(title: t.pickupTitle, detail: t.pickupDetail)
-        async let b = locate(title: t.dropoffTitle, detail: t.dropoffDetail)
-        guard let p = await a, let d = await b else {
-            update("Đón → Trả: không tìm được vị trí",
-                   "Đón: \(t.pickupTitle)\nTrả: \(t.dropoffTitle)")
-            return
+        let (me, known) = currentCoordinate()
+        // Điểm đón: ở gần xe -> trừ điểm mạnh nếu xa vị trí hiện tại.
+        guard let p = await locate(title: t.pickupTitle, detail: t.pickupDetail, near: me,
+                                   spanDeg: 0.15, nearWeight: known ? 0.5 : 0.05) else {
+            update("Đón → Trả: không tìm được điểm đón", t.pickupTitle); return
+        }
+        guard let d = await locate(title: t.dropoffTitle, detail: t.dropoffDetail,
+                                   near: p.item.placemark.coordinate, spanDeg: 2, nearWeight: 0) else {
+            update("Đón → Trả: không tìm được điểm trả", t.dropoffTitle); return
         }
         let names = "Đón: \(name(p))\nTrả: \(name(d))"
-        let line = p.item.placemark.location!.distance(from: d.item.placemark.location!)
-        update("Đón → Trả ≈ \(fmtKm(line * 1.3)) (ước tính)", names)
-
+        if let a = p.item.placemark.location, let b = d.item.placemark.location {
+            update("Đón → Trả ≈ \(fmtKm(a.distance(from: b) * 1.3)) (ước tính)", names)
+        }
         let r = MKDirections.Request()
         r.source = p.item
         r.destination = d.item
@@ -79,13 +138,31 @@ enum TripDistance {
         }
     }
 
+    /// Mỗi thông báo một mã mới để iOS hiện bảng nổi; xoá thông báo cũ cho gọn.
     static func notify(_ title: String, _ body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.removeAllDeliveredNotifications()
         let c = UNMutableNotificationContent()
         c.title = title
         c.body = body
-        if #available(iOS 15.0, *) { c.interruptionLevel = .timeSensitive }
-        // Cùng mã => thông báo mới thay thế thông báo cũ.
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "trip", content: c, trigger: nil))
+        c.interruptionLevel = .timeSensitive
+        center.add(UNNotificationRequest(identifier: UUID().uuidString, content: c, trigger: nil))
     }
+}
+
+/// Theo dõi vị trí xe khi đang quét (cần quyền vị trí "Luôn luôn").
+final class LocationTracker: NSObject, CLLocationManagerDelegate {
+    static let shared = LocationTracker()
+    private let lm = CLLocationManager()
+    private(set) var last: CLLocation?
+
+    func start() {
+        lm.delegate = self
+        lm.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        lm.distanceFilter = 100
+        lm.startUpdatingLocation()
+    }
+    func stop() { lm.stopUpdatingLocation() }
+    func locationManager(_ m: CLLocationManager, didUpdateLocations ls: [CLLocation]) { last = ls.last }
+    func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {}
 }

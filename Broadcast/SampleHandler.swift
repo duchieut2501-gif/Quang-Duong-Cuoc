@@ -9,11 +9,15 @@ class SampleHandler: RPBroadcastSampleHandler {
     private var lastCheck = Date.distantPast
     private var lastTrip: TripText?
     private var lastTripAt = Date.distantPast
-    private var firstFrame = true
     private var lastDiagAt = Date.distantPast
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
-        TripDistance.notify("Quãng Đường đang chạy", "Sẽ báo quãng đường đón → trả khi có cuốc.")
+        DispatchQueue.main.async { LocationTracker.shared.start() }
+        TripDistance.notify("Quãng Đường đang chạy", "Giữ màn hình luôn sáng để app không bị tắt.")
+    }
+
+    override func broadcastFinished() {
+        DispatchQueue.main.async { LocationTracker.shared.stop() }
     }
 
     override func processSampleBuffer(_ sb: CMSampleBuffer, with type: RPSampleBufferType) {
@@ -22,11 +26,6 @@ class SampleHandler: RPBroadcastSampleHandler {
         lastCheck = Date()
         busy = true
         let img = CIImage(cvPixelBuffer: pb)
-        if firstFrame {
-            firstFrame = false
-            TripDistance.notify("Quãng Đường đang quét",
-                                "Khung hình \(Int(img.extent.width))×\(Int(img.extent.height))")
-        }
         queue.async { [self] in
             defer { busy = false }
             let m = reader.findMarkers(img)
