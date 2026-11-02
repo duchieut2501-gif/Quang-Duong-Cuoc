@@ -15,7 +15,11 @@ targets:
   QuangDuongCuoc:
     type: application
     platform: iOS
-    sources: [App, Shared]
+    sources:
+      - App
+      - Shared
+      - path: Overlay
+        excludes: ["libs/**"]
     info:
       path: App/Info.plist
       properties:
@@ -28,6 +32,10 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.quangduongcuoc.app
+        SWIFT_OBJC_BRIDGING_HEADER: Overlay/Bridge.h
+        HEADER_SEARCH_PATHS: $(SRCROOT)/Overlay/headers
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        OTHER_LDFLAGS: $(SRCROOT)/Overlay/libs/GraphicsServices.tbd $(SRCROOT)/Overlay/libs/BackBoardServices.tbd $(SRCROOT)/Overlay/libs/SpringBoardServices.tbd
     dependencies:
       - target: CuocBroadcast
   CuocBroadcast:

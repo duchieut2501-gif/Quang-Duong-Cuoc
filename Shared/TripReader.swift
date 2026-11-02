@@ -17,6 +17,8 @@ final class TripReader {
     private let smallW = 200
     /// Bước dừng lại gần nhất (để kiểm tra lỗi).
     private(set) var diag = ""
+    /// Mép dưới của địa chỉ điểm đến (tỉ lệ chiều cao màn hình), để đặt chữ nổi.
+    private(set) var lastDropoffBottom: CGFloat = 0.5
 
     struct Markers { let pickupTop: CGFloat; let dropoffTop: CGFloat } // tỉ lệ từ mép trên
 
@@ -108,6 +110,7 @@ final class TripReader {
             if let last = drop.last, l.top - last.top > 0.045 { break } // hết khối địa chỉ
             drop.append(l)
         }
+        if let last = drop.last { lastDropoffBottom = last.top + last.height }
         func split(_ ls: [Line]) -> (String, String) {
             guard let maxH = ls.map(\.height).max() else { return ("", "") }
             // Dòng tiêu đề in đậm, chữ to hơn dòng địa chỉ chi tiết.

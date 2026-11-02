@@ -17,17 +17,28 @@ enum TripDistance {
             .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "vi"))
     }
 
-    static func tokens(_ s: String) -> Set<String> {
-        Set(fold(s).components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty && !generic.contains($0) })
+    static func words(_ s: String) -> [String] {
+        fold(s).components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty && !generic.contains($0) }
     }
 
-    /// Điểm khớp: số nhà/ngõ trùng = 2 điểm, chữ trùng = 1 điểm.
-    static func textScore(_ want: Set<String>, _ item: MKMapItem) -> Double {
+    static func tokens(_ s: String) -> Set<String> { Set(words(s)) }
+
+    /// Cặp từ đứng liền nhau, ví dụ "van dinh", "nam du".
+    static func bigrams(_ s: String) -> Set<String> {
+        let w = words(s)
+        return w.count < 2 ? [] : Set((0..<(w.count - 1)).map { w[$0] + " " + w[$0 + 1] })
+    }
+
+    /// Điểm khớp: mỗi từ trùng 1 điểm, mỗi cụm 2 từ liền nhau trùng 2 điểm
+    /// (để "Vân Đình" không bị nhầm với "Văn Minh").
+    static func textScore(_ want: Set<String>, _ wantPairs: Set<String>, _ item: MKMapItem) -> Double {
         let pm = item.placemark
-        let have = tokens([item.name, pm.subThoroughfare, pm.thoroughfare, pm.subLocality, pm.locality,
-                           pm.subAdministrativeArea].compactMap { $0 }.joined(separator: " "))
-        return want.intersection(have).reduce(0) { $0 + ($1.allSatisfy(\.isNumber) ? 2 : 1) }
+        let fields = [item.name, pm.subThoroughfare.map { "\($0) \(pm.thoroughfare ?? "")" } ?? pm.thoroughfare,
+                      pm.subLocality, pm.locality, pm.subAdministrativeArea].compactMap { $0 }
+        let have = fields.reduce(into: Set<String>()) { $0.formUnion(tokens($1)) }
+        let havePairs = fields.reduce(into: Set<String>()) { $0.formUnion(bigrams($1)) }
+        return Double(want.intersection(have).count) + 2 * Double(wantPairs.intersection(havePairs).count)
     }
 
     /// "Phường Vĩnh Hưng, Thành Phố Hà Nội, Việt Nam" -> "Hà Nội"
@@ -75,11 +86,12 @@ enum TripDistance {
             return all
         }
         guard !items.isEmpty else { return nil }
-        let want = tokens(title).isEmpty ? tokens(detail) : tokens(title).union(tokens(detail))
+        let want = tokens(title).union(tokens(detail))
+        let wantPairs = bigrams(title).union(bigrams(detail))
         let here = CLLocation(latitude: near.latitude, longitude: near.longitude)
         func score(_ i: MKMapItem) -> Double {
             let km = (i.placemark.location?.distance(from: here) ?? 1e6) / 1000
-            return textScore(want, i) - nearWeight * min(km, 30)
+            return textScore(want, wantPairs, i) - nearWeight * min(km, 30)
         }
         let best = items.max { a, b in score(a) < score(b) }!
         return Place(item: best)

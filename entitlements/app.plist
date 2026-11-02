@@ -6,5 +6,23 @@
 	<string>com.quangduongcuoc.app</string>
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<key>platform-application</key>
+	<true/>
+	<key>com.apple.private.security.no-sandbox</key>
+	<true/>
+	<key>com.apple.private.persona-mgmt</key>
+	<true/>
+	<key>com.apple.springboard.accessibility-window-hosting</key>
+	<true/>
+	<key>com.apple.QuartzCore.displayable-context</key>
+	<true/>
+	<key>com.apple.QuartzCore.secure-mode</key>
+	<true/>
+	<key>com.apple.backboard.client</key>
+	<true/>
+	<key>com.apple.private.kernel.jetsam</key>
+	<true/>
+	<key>com.apple.private.memorystatus</key>
+	<true/>
 </dict>
 </plist>

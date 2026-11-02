@@ -13,9 +13,18 @@ final class LocAsk: NSObject, CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ m: CLLocationManager) { onChange?(m.authorizationStatus) }
 }
 
-@main
-struct QuangDuongApp: App {
-    var body: some Scene { WindowGroup { ContentView() } }
+/// Điểm vào là Overlay/main.mm (để cùng file app chạy được tiến trình chữ nổi).
+@objc(AppDelegate)
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    var window: UIWindow?
+    func application(_ app: UIApplication,
+                     didFinishLaunchingWithOptions opts: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        let w = UIWindow(frame: UIScreen.main.bounds)
+        w.rootViewController = UIHostingController(rootView: ContentView())
+        w.makeKeyAndVisible()
+        window = w
+        return true
+    }
 }
 
 /// Nút hệ thống để bật/tắt "phát màn hình" sang extension của app.
@@ -34,6 +43,7 @@ struct ContentView: View {
     @State private var testResult = ""
     @State private var showPicker = false
     @State private var locOK = false
+    @State private var overlayOn = false
 
     var body: some View {
         NavigationView {
@@ -48,6 +58,13 @@ struct ContentView: View {
                 Section(header: Text("Vị trí"),
                         footer: Text("Giúp tìm đúng điểm đón (điểm đón luôn ở gần xe). Nên chọn \"Luôn luôn\".")) {
                     Button(locOK ? "✅ Đã cho phép vị trí" : "Cho phép vị trí") { LocAsk.shared.ask() }
+                }
+                Section(header: Text("Chữ nổi trên màn hình"),
+                        footer: Text("Hiện quãng đường ngay dưới địa chỉ điểm đến (cách khoảng 8 mm). Chữ không cản bấm \"Nhận chuyến\".")) {
+                    Toggle("Bật chữ nổi", isOn: Binding(get: { overlayOn }, set: { v in
+                        overlayOn = v
+                        DispatchQueue.global().async { SetOverlayEnabled(v) }
+                    }))
                 }
                 Section(header: Text("Bước 2 — Bật đọc màn hình"),
                         footer: Text("Bấm biểu tượng, chọn \"Quãng Đường\" rồi \"Bắt đầu phát\". Sau đó mở app Xanh SM. Khi có cuốc, thông báo quãng đường đón → trả sẽ hiện ở mép trên. Tắt bằng cách bấm chấm đỏ trên thanh trạng thái.")) {
@@ -68,6 +85,10 @@ struct ContentView: View {
         .onAppear {
             LocAsk.shared.onChange = { st in DispatchQueue.main.async { locOK = st == .authorizedAlways || st == .authorizedWhenInUse } }
             LocAsk.shared.onChange?(LocAsk.shared.lm.authorizationStatus)
+            DispatchQueue.global().async {
+                let on = IsOverlayEnabled()
+                DispatchQueue.main.async { overlayOn = on }
+            }
             UNUserNotificationCenter.current().getNotificationSettings { s in
                 DispatchQueue.main.async { notifOK = s.authorizationStatus == .authorized }
             }
