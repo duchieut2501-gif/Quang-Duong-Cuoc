@@ -30,6 +30,10 @@ jobs:
           ldid -Sentitlements/app.plist "$APP/QuangDuongCuoc"
           mkdir Payload && cp -R "$APP" Payload/
           zip -qry "QuangDuongCuoc_$VER.tipa" Payload
+      - name: Replace old release of same version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "v$VER" -y --cleanup-tag -R "$GITHUB_REPOSITORY" || true
       - name: Release
         uses: softprops/action-gh-release@v2
         with:

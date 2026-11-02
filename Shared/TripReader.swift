@@ -15,6 +15,8 @@ struct TripText: Equatable {
 final class TripReader {
     private let ctx = CIContext(options: [.useSoftwareRenderer: false])
     private let smallW = 200
+    /// Bước dừng lại gần nhất (để kiểm tra lỗi).
+    private(set) var diag = ""
 
     struct Markers { let pickupTop: CGFloat; let dropoffTop: CGFloat } // tỉ lệ từ mép trên
 
@@ -30,18 +32,24 @@ final class TripReader {
         ctx.render(small, toBitmap: &buf, rowBytes: smallW * 4,
                    bounds: CGRect(x: 0, y: 0, width: smallW, height: h),
                    format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
-        // Hàng 0 của bitmap là mép trên màn hình.
+        // y = 0 là mép trên màn hình. Bitmap có thể bị lật dọc tuỳ máy, nên tự dò cả 2 chiều.
+        var flipped = false
         func px(_ x: Int, _ y: Int) -> (Int, Int, Int) {
-            let i = (y * smallW + x) * 4
+            let row = flipped ? h - 1 - y : y
+            let i = (row * smallW + x) * 4
             return (Int(buf[i]), Int(buf[i + 1]), Int(buf[i + 2]))
         }
         // 1) Nút "Nhận chuyến" xanh ngọc ở đáy.
-        var teal = false
-        for fy in stride(from: 0.93, through: 0.975, by: 0.007) {
-            let (r, g, b) = px(smallW / 2, Int(Double(h) * fy))
-            if r < 130, g > 120, b > 130, g - r > 45 { teal = true; break }
+        func hasTeal() -> Bool {
+            for fy in stride(from: 0.93, through: 0.975, by: 0.007) {
+                let (r, g, b) = px(smallW / 2, Int(Double(h) * fy))
+                if r < 130, g > 120, b > 130, g - r > 45 { return true }
+            }
+            return false
         }
-        guard teal else { return nil }
+        if !hasTeal() { flipped = true }
+        guard hasTeal() else { diag = "no-button"; return nil }
+        diag = "button"
         // 2) Chấm vàng (điểm đến) và chấm đen (điểm đón) trên cột biểu tượng.
         // Chấm đen = vùng tối gần nhất phía trên chấm vàng (bỏ qua chữ "0.32km" ở trên).
         var yellow: Int?, black: Int?, lastDark = -10
@@ -57,7 +65,10 @@ final class TripReader {
             }
             if yellow != nil { break }
         }
-        guard let yy = yellow, let by = black, yy > by else { return nil }
+        guard let yy = yellow, let by = black, yy > by else {
+            diag = "Thấy nút Nhận chuyến nhưng không thấy chấm đón/đến (vàng: \(yellow ?? -1), đen: \(black ?? -1), cao \(h))"
+            return nil
+        }
         return Markers(pickupTop: CGFloat(by) / CGFloat(h), dropoffTop: CGFloat(yy) / CGFloat(h))
     }
 
@@ -78,7 +89,9 @@ final class TripReader {
         if let langs = try? req.supportedRecognitionLanguages(), langs.contains("vi-VN") {
             req.recognitionLanguages = ["vi-VN"]
         }
-        do { try VNImageRequestHandler(ciImage: img, options: [:]).perform([req]) } catch { return nil }
+        do { try VNImageRequestHandler(ciImage: img, options: [:]).perform([req]) } catch {
+            diag = "Lỗi đọc chữ: \(error.localizedDescription)"; return nil
+        }
 
         struct Line { let text: String; let top: CGFloat; let height: CGFloat }
         let span = botF - topF
@@ -103,7 +116,10 @@ final class TripReader {
             return (title, detail)
         }
         let (pt, pd) = split(pick), (dt, dd) = split(drop)
-        guard !pt.isEmpty || !pd.isEmpty, !dt.isEmpty || !dd.isEmpty else { return nil }
+        guard !pt.isEmpty || !pd.isEmpty, !dt.isEmpty || !dd.isEmpty else {
+            diag = "Thấy cuốc nhưng đọc chữ thiếu: \(lines.map(\.text).joined(separator: " / "))"
+            return nil
+        }
         return TripText(pickupTitle: pt, pickupDetail: pd, dropoffTitle: dt, dropoffDetail: dd)
     }
 

@@ -9,6 +9,8 @@ class SampleHandler: RPBroadcastSampleHandler {
     private var lastCheck = Date.distantPast
     private var lastTrip: TripText?
     private var lastTripAt = Date.distantPast
+    private var firstFrame = true
+    private var lastDiagAt = Date.distantPast
 
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         TripDistance.notify("Quãng Đường đang chạy", "Sẽ báo quãng đường đón → trả khi có cuốc.")
@@ -20,11 +22,23 @@ class SampleHandler: RPBroadcastSampleHandler {
         lastCheck = Date()
         busy = true
         let img = CIImage(cvPixelBuffer: pb)
+        if firstFrame {
+            firstFrame = false
+            TripDistance.notify("Quãng Đường đang quét",
+                                "Khung hình \(Int(img.extent.width))×\(Int(img.extent.height))")
+        }
         queue.async { [self] in
             defer { busy = false }
-            guard let m = reader.findMarkers(img) else { return }
+            let m = reader.findMarkers(img)
+            let t = m.flatMap { reader.readText(img, $0) }
+            // Đã thấy nút Nhận chuyến mà vẫn hỏng ở bước sau: báo lý do (tối đa 5 giây/lần).
+            if t == nil, reader.diag != "no-button", reader.diag != "button",
+               Date().timeIntervalSince(lastDiagAt) > 5 {
+                lastDiagAt = Date()
+                TripDistance.notify("Quãng Đường: chưa đọc được cuốc", reader.diag)
+            }
             // Cùng một cuốc thì chỉ xử lý 1 lần.
-            guard let t = reader.readText(img, m) else { return }
+            guard let t else { return }
             if t == lastTrip, Date().timeIntervalSince(lastTripAt) < 120 { return }
             lastTrip = t
             lastTripAt = Date()
