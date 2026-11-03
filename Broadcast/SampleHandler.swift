@@ -17,7 +17,14 @@ class SampleHandler: RPBroadcastSampleHandler {
     private var tripID = 0
     private var misses = 0
     // Các lần tìm của cuốc hiện tại (mỗi lần 1 dòng)
-    private let maxAttempts = 5
+    private var maxAttempts = 5
+    /// Số lần tìm do app đặt (mặc định 5).
+    private static func readMaxAttempts() -> Int {
+        var t: Int32 = 0, v: UInt64 = 0
+        notify_register_check("com.quangduongcuoc.maxattempts", &t)
+        notify_get_state(t, &v)
+        return v == 0 ? 5 : min(Int(v), 10)
+    }
     private var attempts = 0
     private var lines: [String] = []
     private var notified = false
@@ -73,6 +80,7 @@ class SampleHandler: RPBroadcastSampleHandler {
                 tripID += 1
                 attempts = 0
                 lines = []
+                maxAttempts = Self.readMaxAttempts()
                 notified = false
                 y = reader.lastDropoffBottom
             }

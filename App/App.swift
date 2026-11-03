@@ -45,6 +45,7 @@ struct ContentView: View {
     @State private var locOK = false
     @State private var overlayOn = false
     @State private var overlayStatus = ""
+    @AppStorage("maxAttempts") private var maxAttempts = 5
 
     var body: some View {
         NavigationView {
@@ -74,6 +75,26 @@ struct ContentView: View {
                     Button("Kiểm tra trạng thái") { DispatchQueue.global().async { refreshOverlay() } }
                     if !overlayStatus.isEmpty { Text(overlayStatus).font(.footnote).foregroundColor(.secondary) }
                 }
+                Section(header: Text("Số lần tìm mỗi cuốc"),
+                        footer: Text("Mỗi lần tìm thêm 1 dòng kết quả bên dưới (1–10 lần).")) {
+                    HStack {
+                        Text("Số lần")
+                        Spacer()
+                        TextField("5", value: $maxAttempts, format: .number)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.center)
+                            .frame(width: 50)
+                            .padding(.vertical, 4)
+                            .background(Color(.tertiarySystemFill))
+                            .cornerRadius(6)
+                        Stepper("", value: $maxAttempts, in: 1...10).labelsHidden()
+                    }
+                    .onChange(of: maxAttempts) { v in
+                        let c = min(max(v, 1), 10)
+                        if c != v { maxAttempts = c }
+                        publishMaxAttempts(c)
+                    }
+                }
                 Section(header: Text("Bước 2 — Bật đọc màn hình"),
                         footer: Text("Bấm biểu tượng, chọn \"Quãng Đường\" rồi \"Bắt đầu phát\". Sau đó mở app Xanh SM. Khi có cuốc, thông báo quãng đường đón → trả sẽ hiện ở mép trên. Tắt bằng cách bấm chấm đỏ trên thanh trạng thái.")) {
                     HStack {
@@ -94,6 +115,7 @@ struct ContentView: View {
             LocAsk.shared.onChange = { st in DispatchQueue.main.async { locOK = st == .authorizedAlways || st == .authorizedWhenInUse } }
             LocAsk.shared.onChange?(LocAsk.shared.lm.authorizationStatus)
             DispatchQueue.global().async { refreshOverlay() }
+            publishMaxAttempts(maxAttempts)
             UNUserNotificationCenter.current().getNotificationSettings { s in
                 DispatchQueue.main.async { notifOK = s.authorizationStatus == .authorized }
             }
@@ -145,4 +167,11 @@ struct ImagePicker: UIViewControllerRepresentable {
             }
         }
     }
+}
+
+/// Gửi số lần tìm sang phần đọc màn hình (qua tín hiệu hệ thống, vì 2 phần không dùng chung dữ liệu).
+func publishMaxAttempts(_ n: Int) {
+    var t: Int32 = 0
+    notify_register_check("com.quangduongcuoc.maxattempts", &t)
+    notify_set_state(t, UInt64(n))
 }
